@@ -101,6 +101,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -762,22 +763,28 @@ public class DockerConnector {
         final AuthConfigs authConfigs = params.getAuthConfigs();
         final String repository = params.getRepository();
         final String tag = params.getTag();
+        final Map<String, String> buildArgs = params.getBuildargs();
 
         try (DockerConnection connection = dockerConnection.method("POST")
                                                            .path(apiVersionPathPrefix + "/build")
-                                                           .query("rm", 1)
-                                                           .query("forcerm", 1)
                                                            .header("X-Registry-Config",
                                                                    authResolver.getXRegistryConfigHeaderValue(authConfigs))) {
+            addQueryParamIfNotNull(connection, "rm", params.isRm());
+            addQueryParamIfNotNull(connection, "forcerm", params.isForcerm());
+            addQueryParamIfNotNull(connection, "memory", params.getMemoryLimit());
+            addQueryParamIfNotNull(connection, "memswap", params.getMemorySwapLimit());
+            addQueryParamIfNotNull(connection, "pull", params.isDoForcePull());
+            addQueryParamIfNotNull(connection, "dockerfile", params.getDockerfile());
+            addQueryParamIfNotNull(connection, "nocache", params.isNocache());
+            addQueryParamIfNotNull(connection, "q", params.isQ());
             if (tag == null) {
                 addQueryParamIfNotNull(connection, "t", repository);
             } else {
                 addQueryParamIfNotNull(connection, "t", repository == null ? null : repository + ':' + tag);
             }
-            addQueryParamIfNotNull(connection, "memory", params.getMemoryLimit());
-            addQueryParamIfNotNull(connection, "memswap", params.getMemorySwapLimit());
-            addQueryParamIfNotNull(connection, "pull", params.isDoForcePull());
-            addQueryParamIfNotNull(connection, "dockerfile", params.getDockerfile());
+            if (buildArgs != null) {
+                addQueryParamIfNotNull(connection, "buildargs", GSON.toJson(buildArgs));
+            }
 
             final DockerResponse response = connection.request();
             if (OK.getStatusCode() != response.getStatus()) {

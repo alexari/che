@@ -53,7 +53,6 @@ import org.eclipse.che.plugin.docker.client.json.HostConfig;
 import org.eclipse.che.plugin.docker.client.params.CreateContainerParams;
 import org.eclipse.che.plugin.docker.client.params.GetContainerLogsParams;
 import org.eclipse.che.plugin.docker.client.params.BuildImageParams;
-import org.eclipse.che.plugin.docker.client.params.CreateContainerParams;
 import org.eclipse.che.plugin.docker.client.params.PullParams;
 import org.eclipse.che.plugin.docker.client.params.RemoveImageParams;
 import org.eclipse.che.plugin.docker.client.params.StartContainerParams;
@@ -108,6 +107,11 @@ public class DockerInstanceProvider implements InstanceProvider {
      * image type support with recipe script being the name of the repository + image name
      */
     public static final String DOCKER_IMAGE_TYPE = "image";
+
+    /**
+     * prevent build / start machine on a node with maintenance status
+     */
+    public static final String MAINTENANCE_CONSTRAINT = "constraint:node-state!=maintenance";
 
     private final DockerConnector                               docker;
     private final UserSpecificDockerRegistryCredentialsProvider dockerCredentials;
@@ -424,11 +428,14 @@ public class DockerInstanceProvider implements InstanceProvider {
                 }
             };
             docker.buildImage(BuildImageParams.create(files.toArray(new File[files.size()]))
+                                              .withRm(true)
+                                              .withForceRm(true)
                                               .withRepository(imageName)
                                               .withAuthConfigs(dockerCredentials.getCredentials())
                                               .withDoForcePull(doForcePullOnBuild)
                                               .withMemoryLimit(memoryLimit)
-                                              .withMemorySwapLimit(memorySwapLimit),
+                                              .withMemorySwapLimit(memorySwapLimit)
+                                              .addBuildArg(MAINTENANCE_CONSTRAINT, null), // don't build an image on a node with maintenance
                               progressMonitor);
         } catch (IOException | InterruptedException e) {
             throw new MachineException(e.getMessage(), e);
@@ -554,6 +561,7 @@ public class DockerInstanceProvider implements InstanceProvider {
                 env = new ArrayList<>(devMachineEnvVariables);
                 env.add(DockerInstanceRuntimeInfo.CHE_WORKSPACE_ID + '=' + machine.getWorkspaceId());
                 env.add(DockerInstanceRuntimeInfo.USER_TOKEN + '=' + getUserToken(machine.getWorkspaceId()));
+                env.add(MAINTENANCE_CONSTRAINT); // do not start a container on a node with maintenance
             } else {
                 portsToExpose = new HashMap<>(commonMachinePortsToExpose);
                 volumes = commonMachineSystemVolumes;
