@@ -145,6 +145,13 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FilenameFilter;
 import java.io.IOException;
+import java.net.Authenticator;
+import java.net.InetSocketAddress;
+import java.net.PasswordAuthentication;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.SocketAddress;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.attribute.PosixFilePermission;
 import java.util.ArrayList;
@@ -157,6 +164,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -235,6 +243,29 @@ class JGitConnection implements GitConnection {
     private final GitUserResolver   userResolver;
     private final Repository        repository;
 
+    // setup authenticators to use JGit behind the proxy
+    private static Authenticator httpsProxyAuth;
+    private static Authenticator httpProxyAuth;
+    static {
+        if (Objects.nonNull(System.getProperty("http.proxyUser")) && Objects.nonNull(System.getProperty("http.proxyPassword"))) {
+            httpProxyAuth = new Authenticator() {
+                protected PasswordAuthentication getPasswordAuthentication() {
+                    return new PasswordAuthentication(System.getProperty("http.proxyUser"),
+                                                      System.getProperty("http.proxyPassword").toCharArray());
+                }
+            };
+        }
+
+        if (Objects.nonNull(System.getProperty("https.proxyUser")) && Objects.nonNull(System.getProperty("https.proxyPassword"))) {
+            httpsProxyAuth = new Authenticator() {
+                protected PasswordAuthentication getPasswordAuthentication() {
+                    return new PasswordAuthentication(System.getProperty("https.proxyUser"),
+                                                      System.getProperty("https.proxyPassword").toCharArray());
+                }
+            };
+        }
+    }
+    
     @Inject
     JGitConnection(Repository repository, CredentialsLoader credentialsLoader, SshKeyProvider sshKeyProvider,
                    GitUserResolver userResolver) {
@@ -1597,6 +1628,18 @@ class JGitConnection implements GitConnection {
                                                                                            credentials.getPassword()));
                 }
             }
+
+            LOG.info("new");
+            if (remoteUrl.startsWith("https:") || remoteUrl.startsWith("ssh:")) {
+                if (Objects.nonNull(httpProxyAuth)) {
+                    Authenticator.setDefault(httpProxyAuth);
+                }
+            } else {
+                if (Objects.nonNull(httpsProxyAuth)) {
+                    Authenticator.setDefault(httpsProxyAuth);
+                }
+            }
+
             return command.call();
         } catch (GitException | TransportException exception) {
             if ("Unable get private ssh key".equals(exception.getMessage())
