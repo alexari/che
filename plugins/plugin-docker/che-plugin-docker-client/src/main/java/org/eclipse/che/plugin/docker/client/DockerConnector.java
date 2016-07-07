@@ -781,7 +781,7 @@ public class DockerConnector {
             } else {
                 addQueryParamIfNotNull(connection, "t", repository == null ? null : repository + ':' + tag);
             }
-            if (buildArgs != null) {
+            if (buildArgs != null && !"{}".equals(buildArgs)) {
                 addQueryParamIfNotNull(connection, "buildargs", GSON.toJson(buildArgs));
             }
 
