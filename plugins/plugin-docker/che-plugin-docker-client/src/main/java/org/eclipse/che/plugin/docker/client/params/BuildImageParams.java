@@ -45,7 +45,7 @@ public class BuildImageParams {
     private Boolean            nocache;
     private Boolean            rm;
     private Boolean            forceRm;
-    private Map<String,String> buildArgs;
+    private String             buildArgs;
 
     /**
      * Creates arguments holder with required parameters.
@@ -272,35 +272,16 @@ public class BuildImageParams {
      * Users pass these values at build-time.
      * Docker uses the buildargs as the environment context for command(s) run via the Dockerfile’s RUN instruction
      * or for variable expansion in other Dockerfile instructions.
+     * <br/>
+     * This is not documented, but if pass singe value like {@code constraint:label==val}
+     * in build args it will work (at least for constraints)
      *
      * @param buildArgs
      *         map of build arguments
      * @return this params instance
      */
-    public BuildImageParams withBuildArgs(Map<String,String> buildArgs) {
+    public BuildImageParams withBuildArgs(String buildArgs) {
         this.buildArgs = buildArgs;
-        return this;
-    }
-
-    /**
-     * Adds build arg to this parameters object.
-     *
-     * @param key
-     *         build arg key
-     * @param value
-     *         build arg value
-     * @return this params instance
-     * @throws NullPointerException
-     *         if {@code key} is null
-     */
-    public BuildImageParams addBuildArg(@NotNull String key, String value) {
-        requireNonNull(key);
-
-        if (buildArgs == null) {
-            buildArgs = new HashMap<>();
-        }
-
-        buildArgs.put(key, value);
         return this;
     }
 
@@ -364,11 +345,11 @@ public class BuildImageParams {
         return rm;
     }
 
-    public Boolean isForcerm() {
+    public Boolean isForceRm() {
         return forceRm;
     }
 
-    public Map<String, String> getBuildargs() {
+    public String getBuildArgs() {
         return buildArgs;
     }
 

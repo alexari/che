@@ -762,28 +762,26 @@ public class DockerConnector {
         final AuthConfigs authConfigs = params.getAuthConfigs();
         final String repository = params.getRepository();
         final String tag = params.getTag();
-        final Map<String, String> buildArgs = params.getBuildargs();
 
         try (DockerConnection connection = dockerConnection.method("POST")
                                                            .path(apiVersionPathPrefix + "/build")
                                                            .header("X-Registry-Config",
                                                                    authResolver.getXRegistryConfigHeaderValue(authConfigs))) {
             addQueryParamIfNotNull(connection, "rm", params.isRm());
-            addQueryParamIfNotNull(connection, "forcerm", params.isForcerm());
+            addQueryParamIfNotNull(connection, "forcerm", params.isForceRm());
             addQueryParamIfNotNull(connection, "memory", params.getMemoryLimit());
             addQueryParamIfNotNull(connection, "memswap", params.getMemorySwapLimit());
             addQueryParamIfNotNull(connection, "pull", params.isDoForcePull());
             addQueryParamIfNotNull(connection, "dockerfile", params.getDockerfile());
             addQueryParamIfNotNull(connection, "nocache", params.isNocache());
             addQueryParamIfNotNull(connection, "q", params.isQ());
+            addQueryParamIfNotNull(connection, "buildargs", params.getBuildArgs());
             if (tag == null) {
                 addQueryParamIfNotNull(connection, "t", repository);
             } else {
                 addQueryParamIfNotNull(connection, "t", repository == null ? null : repository + ':' + tag);
             }
-            if (buildArgs != null && !"{}".equals(buildArgs)) {
-                addQueryParamIfNotNull(connection, "buildargs", GSON.toJson(buildArgs));
-            }
+
 
             final DockerResponse response = connection.request();
             if (OK.getStatusCode() != response.getStatus()) {

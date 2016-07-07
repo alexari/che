@@ -111,7 +111,7 @@ public class DockerInstanceProvider implements InstanceProvider {
     /**
      * prevent build / start machine on a node with maintenance status
      */
-    public static final String MAINTENANCE_CONSTRAINT = "constraint:node-state!=maintenance";
+    public static final String MAINTENANCE_CONSTRAINT = "constraint:com.codenvy.nodestate!=maintenance";
 
     private final DockerConnector                               docker;
     private final UserSpecificDockerRegistryCredentialsProvider dockerCredentials;
@@ -435,7 +435,7 @@ public class DockerInstanceProvider implements InstanceProvider {
                                               .withDoForcePull(doForcePullOnBuild)
                                               .withMemoryLimit(memoryLimit)
                                               .withMemorySwapLimit(memorySwapLimit)
-                                              .addBuildArg(MAINTENANCE_CONSTRAINT, null), // don't build an image on a node with maintenance
+                                              .withBuildArgs(MAINTENANCE_CONSTRAINT), // don't build an image on a node with maintenance
                               progressMonitor);
         } catch (IOException e) {
             throw new MachineException(e.getLocalizedMessage(), e);
