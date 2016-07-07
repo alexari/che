@@ -15,12 +15,9 @@ import com.google.common.base.MoreObjects;
 import org.aopalliance.intercept.MethodInterceptor;
 import org.aopalliance.intercept.MethodInvocation;
 import org.eclipse.che.api.core.model.machine.MachineConfig;
-import org.eclipse.che.api.core.model.machine.Recipe;
 import org.eclipse.che.api.machine.server.exception.MachineException;
-import org.eclipse.che.api.machine.server.util.RecipeRetriever;
 import org.eclipse.che.plugin.docker.client.DockerConnector;
 import org.eclipse.che.plugin.docker.client.DockerFileException;
-import org.eclipse.che.plugin.docker.client.Dockerfile;
 import org.eclipse.che.plugin.docker.client.ProgressMonitor;
 import org.eclipse.che.plugin.docker.client.UserSpecificDockerRegistryCredentialsProvider;
 import org.eclipse.che.plugin.docker.client.params.PullParams;
@@ -32,47 +29,43 @@ import javax.inject.Inject;
 import java.io.IOException;
 
 /**
- * Allow to build docker machine if base image of machine recipe cached but network is gone.
+ * Allow creation of docker machine when image for machine cached but network is gone.
+ * In that case we use cached image, otherwise pull the latest one.
  *
  * @author Alexander Garagatyi
  *
- * @see DockerInstanceProvider#buildImage(MachineConfig, String, boolean, long, long, ProgressMonitor)
+ * @see DockerInstanceProvider#pullImage(MachineConfig, String, ProgressMonitor)
  */
-public class EnableOfflineDockerMachineBuildInterceptor implements MethodInterceptor {
+// todo add tests
+public class EnableOfflineDockerMachineImagePullInterceptor implements MethodInterceptor {
     @Inject
     DockerConnector                               dockerConnector;
     @Inject
     UserSpecificDockerRegistryCredentialsProvider dockerCredentials;
-    @Inject
-    RecipeRetriever                               recipeRetriever;
 
     @Override
     public Object invoke(MethodInvocation methodInvocation) throws Throwable {
-        // If force pull of base image is not disabled ensure that image build won't fail if needed layers are cached
-        // but update of them fails due to network outage.
-        // To do that do pull here if needed and make DockerInstanceProvider to not do force pull itself.
-        final boolean isForcePullEnabled = (boolean)methodInvocation.getArguments()[2];
-        if (isForcePullEnabled) {
-            MachineConfig machineConfig = (MachineConfig)methodInvocation.getArguments()[0];
-            ProgressMonitor progressMonitor = (ProgressMonitor)methodInvocation.getArguments()[5];
+        MachineConfig machineConfig = (MachineConfig)methodInvocation.getArguments()[0];
+        ProgressMonitor progressMonitor = (ProgressMonitor)methodInvocation.getArguments()[2];
 
-            try {
-                pullImage(machineConfig, progressMonitor);
-            } catch (IOException | DockerFileException | InterruptedException ignored) {
-            }
+        try {
+            pullImage(machineConfig, progressMonitor);
+        } catch (IOException | MachineException | DockerFileException ignored) {
         }
 
-        // set force pulling flag to false
-        methodInvocation.getArguments()[2] = Boolean.FALSE;
         return methodInvocation.proceed();
     }
 
     private void pullImage(MachineConfig machineConfig, ProgressMonitor progressMonitor)
-            throws DockerFileException, IOException, InterruptedException, MachineException {
+            throws IOException, MachineException, DockerFileException {
 
-        Recipe recipe = recipeRetriever.getRecipe(machineConfig);
-        Dockerfile dockerfile = DockerInstanceProvider.parseRecipe(recipe);
-        DockerImageIdentifier imageIdentifier = DockerImageIdentifierParser.parse(dockerfile.getImages().get(0).getFrom());
+        String imageToPull = machineConfig.getSource().getLocation();
+        if (imageToPull == null) {
+            // Image is null, we can't pull it. Intercepted method should handle that case
+            return;
+        }
+
+        DockerImageIdentifier imageIdentifier = DockerImageIdentifierParser.parse(imageToPull);
 
         dockerConnector.pull(PullParams.create(imageIdentifier.getRepository())
                                        .withTag(MoreObjects.firstNonNull(imageIdentifier.getTag(), "latest"))

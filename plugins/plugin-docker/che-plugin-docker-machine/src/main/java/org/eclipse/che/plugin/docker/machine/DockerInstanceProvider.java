@@ -10,6 +10,7 @@
  *******************************************************************************/
 package org.eclipse.che.plugin.docker.machine;
 
+import com.google.common.base.MoreObjects;
 import com.google.common.base.Strings;
 import com.google.common.collect.Maps;
 import com.google.common.collect.ObjectArrays;
@@ -75,7 +76,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -256,7 +256,6 @@ public class DockerInstanceProvider implements InstanceProvider {
         return esc;
     }
 
-
     @Override
     public String getType() {
         return "docker";
@@ -266,8 +265,6 @@ public class DockerInstanceProvider implements InstanceProvider {
     public Set<String> getRecipeTypes() {
         return supportedRecipeTypes;
     }
-
-
 
     /**
      * Creates instance from scratch or by reusing a previously one by using specified {@link MachineSource}
@@ -287,6 +284,8 @@ public class DockerInstanceProvider implements InstanceProvider {
      * @throws MachineException
      *         if other error occurs
      */
+    // todo check interceptor for build
+    // add interceptor for pull
     @Override
     public Instance createInstance(Machine machine,
                                    LineConsumer creationLogsOutput) throws UnsupportedRecipeException,
@@ -294,116 +293,100 @@ public class DockerInstanceProvider implements InstanceProvider {
                                                                            SourceNotFoundException,
                                                                            NotFoundException,
                                                                            MachineException {
+        MachineConfig config = machine.getConfig();
+        String sourceType = config.getSource().getType();
 
-        // based on machine source, do the right steps
-        MachineConfig machineConfig = machine.getConfig();
-        MachineSource machineSource = machineConfig.getSource();
-        String type = machineSource.getType();
-
-        // create container machine name
         final String userName = EnvironmentContext.getCurrent().getSubject().getUserName();
-        final String machineContainerName = containerNameGenerator.generateContainerName(machine.getWorkspaceId(),
-                                                                                         machine.getId(),
-                                                                                         userName,
-                                                                                         machine.getConfig().getName());
-        // get recipe
-        // - it's a dockerfile type:
-        //    - location defined : download this location and get script as recipe
-        //    - content defined  : use this content as recipe script
-        // - it's an image:
-        //    - use location of image ([registry:port]/<repository-image>[:tag][@digest])
-        final Recipe recipe;
-        if (DOCKER_FILE_TYPE.equals(type)) {
-            recipe = this.recipeRetriever.getRecipe(machineConfig);
-        } else if (DOCKER_IMAGE_TYPE.equals(type)) {
-            if (isNullOrEmpty(machineSource.getLocation())) {
-                throw new InvalidRecipeException(String.format("The type '%s' needs to be used with a location, not with any other parameter. Found '%s'.", type, machineSource));
+        final String containerName = containerNameGenerator.generateContainerName(machine.getWorkspaceId(),
+                                                                                  machine.getId(),
+                                                                                  userName,
+                                                                                  config.getName());
+        final String imageName = "eclipse-che/" + containerName;
+        final long memoryLimit = (long)config.getLimits().getRam() * 1024 * 1024;
+        final ProgressLineFormatterImpl progressLineFormatter = new ProgressLineFormatterImpl();
+        ProgressMonitor progressMonitor = currentProgressStatus -> {
+            try {
+                creationLogsOutput.writeLine(progressLineFormatter.format(currentProgressStatus));
+            } catch (IOException e) {
+                LOG.error(e.getLocalizedMessage(), e);
             }
-            return createInstanceFromImage(machine, machineContainerName, creationLogsOutput);
+        };
+
+        if (DOCKER_FILE_TYPE.equals(sourceType)) {
+            buildImage(config, imageName, doForcePullOnBuild, memoryLimit, memoryLimit, progressMonitor);
+        } else if (DOCKER_IMAGE_TYPE.equals(sourceType)) {
+            pullImage(config, imageName, progressMonitor);
         } else {
             // not supported
-            throw new UnsupportedRecipeException("The type '" + type + "' is not supported");
+            throw new UnsupportedRecipeException("The type '" + sourceType + "' is not supported");
         }
-        final Dockerfile dockerfile = parseRecipe(recipe);
 
-        final String machineImageName = "eclipse-che/" + machineContainerName;
-        final long memoryLimit = (long)machine.getConfig().getLimits().getRam() * 1024 * 1024;
-
-        buildImage(dockerfile, creationLogsOutput, machineImageName, doForcePullOnBuild, memoryLimit, -1);
-
-        return createInstance(machineContainerName,
+        return createInstance(containerName,
                               machine,
-                              machineImageName,
+                              imageName,
                               creationLogsOutput);
     }
 
-    protected Instance createInstanceFromImage(Machine machine,
-                                               String machineContainerName,
-                                               LineConsumer creationLogsOutput) throws NotFoundException,
-                                                                                       MachineException,
-                                                                                       SourceNotFoundException {
-        final DockerMachineSource dockerMachineSource = new DockerMachineSource(machine.getConfig().getSource());
-
-        if (snapshotUseRegistry) {
-            pullImage(dockerMachineSource, creationLogsOutput);
+    protected void pullImage(MachineConfig machineConfig,
+                             String machineImageName,
+                             ProgressMonitor progressMonitor) throws NotFoundException,
+                                                                     MachineException,
+                                                                     SourceNotFoundException {
+        MachineSource source = machineConfig.getSource();
+        if (isNullOrEmpty(source.getLocation())) {
+            throw new InvalidRecipeException(
+                    format("The type '%s' needs to be used with a location, not with any other parameter. Found '%s'.",
+                           source.getType(),
+                           source));
+        }
+        final DockerMachineSource dockerMachineSource = new DockerMachineSource(source);
+        if (dockerMachineSource.getRepository() == null) {
+            throw new MachineException(
+                    format("Machine creation failed. Machine source is invalid. No repository is defined. Found %s.",
+                           dockerMachineSource));
         }
 
-        final String machineImageName = "eclipse-che/" + machineContainerName;
-        final String fullNameOfPulledImage = dockerMachineSource.getLocation(false);
         try {
-            // tag image with generated name to allow sysadmin recognize it
-            docker.tag(TagParams.create(fullNameOfPulledImage, machineImageName));
-        } catch (ImageNotFoundException nfEx) {
-            throw new SourceNotFoundException(nfEx.getLocalizedMessage(), nfEx);
-        } catch (IOException ioEx) {
-            LOG.error(ioEx.getLocalizedMessage(), ioEx);
-            throw new MachineException("Can't create machine from snapshot.");
-        }
-        try {
-            // remove unneeded tag
-            docker.removeImage(RemoveImageParams.create(fullNameOfPulledImage).withForce(false));
+            if (snapshotUseRegistry) {
+                PullParams pullParams = PullParams.create(dockerMachineSource.getRepository())
+                                                  .withTag(MoreObjects.firstNonNull(dockerMachineSource.getTag(), LATEST_TAG))
+                                                  .withRegistry(dockerMachineSource.getRegistry())
+                                                  .withAuthConfigs(dockerCredentials.getCredentials());
+                docker.pull(pullParams, progressMonitor);
+            }
+
+            final String fullNameOfPulledImage = dockerMachineSource.getLocation(false);
+            try {
+                // tag image with generated name to allow sysadmin recognize it
+                docker.tag(TagParams.create(fullNameOfPulledImage, machineImageName));
+            } catch (ImageNotFoundException nfEx) {
+                throw new SourceNotFoundException(nfEx.getLocalizedMessage(), nfEx);
+            }
+
+            // todo here is a bug. Both machine from image and machine from snapshot are treated as machine from snapshot.
+            // we should fix that here and several lines above.
+            // In case it is machine from image or local snapshot we should not delete origin name
+            // if it is pulled snapshot we should delete origin name
+            if (snapshotUseRegistry) {
+                // remove unneeded origin name of pulled image
+                docker.removeImage(RemoveImageParams.create(fullNameOfPulledImage).withForce(false));
+            }
         } catch (IOException e) {
             LOG.error(e.getLocalizedMessage(), e);
-        }
-
-        return createInstance(machineContainerName,
-                              machine,
-                              machineImageName,
-                              creationLogsOutput);
-    }
-
-    private Dockerfile parseRecipe(final Recipe recipe) throws InvalidRecipeException {
-        final Dockerfile dockerfile = getDockerFile(recipe);
-        if (dockerfile.getImages().isEmpty()) {
-            throw new InvalidRecipeException("Unable build docker based machine, Dockerfile found but it doesn't contain base image.");
-        }
-        if (dockerfile.getImages().size() > 1) {
-            throw new InvalidRecipeException(
-                    "Unable build docker based machine, Dockerfile found but it contains more than one instruction 'FROM'.");
-        }
-        return dockerfile;
-    }
-
-    private Dockerfile getDockerFile(final Recipe recipe) throws InvalidRecipeException {
-        if (recipe.getScript() == null) {
-            throw new InvalidRecipeException("Unable build docker based machine, recipe isn't set or doesn't provide Dockerfile and " +
-                                             "no Dockerfile found in the list of files attached to this builder.");
-        }
-        try {
-            return DockerfileParser.parse(recipe.getScript());
-        } catch (DockerFileException e) {
-            LOG.debug(e.getLocalizedMessage(), e);
-            throw new InvalidRecipeException("Unable build docker based machine. " + e.getMessage());
+            throw new MachineException("Can't create machine from image. Cause: " + e.getLocalizedMessage());
         }
     }
 
-    protected void buildImage(final Dockerfile dockerfile,
-                              final LineConsumer creationLogsOutput,
-                              final String imageName,
-                              final boolean doForcePullOnBuild,
-                              final long memoryLimit,
-                              final long memorySwapLimit)
+    protected void buildImage(MachineConfig machineConfig,
+                              String imageName,
+                              boolean doForcePullOnBuild,
+                              long memoryLimit,
+                              long memorySwapLimit,
+                              ProgressMonitor progressMonitor)
             throws MachineException {
+
+        Recipe recipe = recipeRetriever.getRecipe(machineConfig);
+        Dockerfile dockerfile = parseRecipe(recipe);
 
         File workDir = null;
         try {
@@ -411,18 +394,7 @@ public class DockerInstanceProvider implements InstanceProvider {
             workDir = Files.createTempDirectory(null).toFile();
             final File dockerfileFile = new File(workDir, "Dockerfile");
             dockerfile.writeDockerfile(dockerfileFile);
-            final List<File> files = new LinkedList<>();
-            //noinspection ConstantConditions
-            Collections.addAll(files, workDir.listFiles());
-            final ProgressLineFormatterImpl progressLineFormatter = new ProgressLineFormatterImpl();
-            final ProgressMonitor progressMonitor = currentProgressStatus -> {
-                try {
-                    creationLogsOutput.writeLine(progressLineFormatter.format(currentProgressStatus));
-                } catch (IOException e) {
-                    LOG.error(e.getLocalizedMessage(), e);
-                }
-            };
-            docker.buildImage(BuildImageParams.create(files.toArray(new File[files.size()]))
+            docker.buildImage(BuildImageParams.create(dockerfileFile)
                                               .withRepository(imageName)
                                               .withAuthConfigs(dockerCredentials.getCredentials())
                                               .withDoForcePull(doForcePullOnBuild)
@@ -438,33 +410,24 @@ public class DockerInstanceProvider implements InstanceProvider {
         }
     }
 
-    private void pullImage(final DockerMachineSource dockerMachineSource, final LineConsumer creationLogsOutput) throws MachineException {
-        if (dockerMachineSource.getRepository() == null) {
-            throw new MachineException(String.format("Machine creation failed. Machine source is invalid. No repository is defined. Found %s.", dockerMachineSource));
+    public static Dockerfile parseRecipe(final Recipe recipe) throws InvalidRecipeException {
+        if (recipe.getScript() == null) {
+            throw new InvalidRecipeException("Unable build docker based machine, recipe isn't set or doesn't provide Dockerfile and " +
+                                             "no Dockerfile found in the list of files attached to this builder.");
         }
-
-        final String tag;
-        if (isNullOrEmpty(dockerMachineSource.getTag())) {
-            tag = LATEST_TAG;
-        } else {
-            tag = dockerMachineSource.getTag();
-        }
-        PullParams pullParams = PullParams.create(dockerMachineSource.getRepository())
-                                          .withTag(tag)
-                                          .withRegistry(dockerMachineSource.getRegistry())
-                                          .withAuthConfigs(dockerCredentials.getCredentials());
         try {
-            final ProgressLineFormatterImpl progressLineFormatter = new ProgressLineFormatterImpl();
-            docker.pull(pullParams,
-                        currentProgressStatus -> {
-                            try {
-                                creationLogsOutput.writeLine(progressLineFormatter.format(currentProgressStatus));
-                            } catch (IOException e) {
-                                LOG.error(e.getLocalizedMessage(), e);
-                            }
-                        });
-        } catch (IOException | InterruptedException e) {
-            throw new MachineException(e.getLocalizedMessage(), e);
+            Dockerfile dockerfile = DockerfileParser.parse(recipe.getScript());
+            if (dockerfile.getImages().isEmpty()) {
+                throw new InvalidRecipeException("Unable build docker based machine, Dockerfile found but it doesn't contain base image.");
+            }
+            if (dockerfile.getImages().size() > 1) {
+                throw new InvalidRecipeException(
+                        "Unable build docker based machine, Dockerfile found but it contains more than one instruction 'FROM'.");
+            }
+            return dockerfile;
+        } catch (DockerFileException e) {
+            LOG.debug(e.getLocalizedMessage(), e);
+            throw new InvalidRecipeException("Unable build docker based machine. " + e.getMessage());
         }
     }
 
@@ -594,7 +557,7 @@ public class DockerInstanceProvider implements InstanceProvider {
             executor.execute(() -> {
                 long lastProcessedLogDate = 0;
                 boolean isContainerRunning = true;
-                while(isContainerRunning) {
+                while (isContainerRunning) {
                     try {
                         docker.getContainerLogs(GetContainerLogsParams.create(containerId)
                                                                       .withFollow(true)

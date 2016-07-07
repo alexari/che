@@ -22,10 +22,9 @@ import org.eclipse.che.api.machine.server.spi.InstanceProcess;
 import org.eclipse.che.plugin.docker.machine.DockerInstance;
 import org.eclipse.che.plugin.docker.machine.DockerInstanceProvider;
 import org.eclipse.che.plugin.docker.machine.DockerInstanceRuntimeInfo;
-import org.eclipse.che.plugin.docker.machine.local.provider.CheHostVfsRootDirProvider;
-import org.eclipse.che.plugin.docker.machine.local.provider.ExtraVolumeProvider;
-import org.eclipse.che.plugin.docker.machine.node.DockerNode;
 import org.eclipse.che.plugin.docker.machine.DockerProcess;
+import org.eclipse.che.plugin.docker.machine.local.provider.CheHostVfsRootDirProvider;
+import org.eclipse.che.plugin.docker.machine.node.DockerNode;
 
 import static org.eclipse.che.inject.Matchers.names;
 
@@ -73,6 +72,11 @@ public class LocalDockerModule extends AbstractModule {
                 new org.eclipse.che.plugin.docker.machine.local.interceptor.EnableOfflineDockerMachineBuildInterceptor();
         requestInjection(offlineMachineBuildInterceptor);
         bindInterceptor(Matchers.subclassesOf(DockerInstanceProvider.class), names("buildImage"), offlineMachineBuildInterceptor);
+        org.eclipse.che.plugin.docker.machine.local.interceptor.EnableOfflineDockerMachineImagePullInterceptor
+                offlineMachineImagePullInterceptor =
+                new org.eclipse.che.plugin.docker.machine.local.interceptor.EnableOfflineDockerMachineImagePullInterceptor();
+        requestInjection(offlineMachineImagePullInterceptor);
+        bindInterceptor(Matchers.subclassesOf(DockerInstanceProvider.class), names("pullImage"), offlineMachineImagePullInterceptor);
 
         Multibinder<String> devMachineVolumes = Multibinder.newSetBinder(binder(),
                                                                          String.class,
