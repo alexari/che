@@ -58,7 +58,7 @@ public class EnableOfflineDockerMachineBuildInterceptor implements MethodInterce
 
             try {
                 pullImage(machineConfig, progressMonitor);
-            } catch (IOException | DockerFileException | InterruptedException ignored) {
+            } catch (IOException | DockerFileException ignored) {
             }
         }
 
@@ -68,7 +68,7 @@ public class EnableOfflineDockerMachineBuildInterceptor implements MethodInterce
     }
 
     private void pullImage(MachineConfig machineConfig, ProgressMonitor progressMonitor)
-            throws DockerFileException, IOException, InterruptedException, MachineException {
+            throws DockerFileException, IOException, MachineException {
 
         Recipe recipe = recipeRetriever.getRecipe(machineConfig);
         Dockerfile dockerfile = DockerInstanceProvider.parseRecipe(recipe);

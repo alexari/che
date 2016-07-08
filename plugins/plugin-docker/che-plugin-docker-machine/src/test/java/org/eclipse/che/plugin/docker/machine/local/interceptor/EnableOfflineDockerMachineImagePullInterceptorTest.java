@@ -19,9 +19,7 @@ import com.google.inject.spi.ConstructorBinding;
 
 import org.aopalliance.intercept.MethodInvocation;
 import org.eclipse.che.api.core.model.machine.MachineConfig;
-import org.eclipse.che.api.core.model.machine.Recipe;
-import org.eclipse.che.api.machine.server.util.RecipeDownloader;
-import org.eclipse.che.api.machine.server.util.RecipeRetriever;
+import org.eclipse.che.api.machine.server.model.impl.MachineSourceImpl;
 import org.eclipse.che.api.workspace.server.WorkspaceManager;
 import org.eclipse.che.plugin.docker.client.DockerConnector;
 import org.eclipse.che.plugin.docker.client.ProgressMonitor;
@@ -40,16 +38,19 @@ import org.testng.annotations.Test;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.net.URI;
 
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * @author Alexander Garagatyi
+ */
 @Listeners(MockitoTestNGListener.class)
-public class EnableOfflineDockerMachineBuildInterceptorTest {
+public class EnableOfflineDockerMachineImagePullInterceptorTest {
     private static final String REPO  = "some/image";
     private static final String TAG   = "tag1";
     private static final String IMAGE = REPO + ":" + TAG;
@@ -68,21 +69,15 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
     private MachineConfig                                 machineConfig;
     @Mock
     private ProgressMonitor                               progressMonitor;
-    @Mock
-    private RecipeRetriever                               recipeRetriever;
-    @Mock
-    private Recipe                                        recipe;
 
-
-    private DockerInstanceProvider                     dockerInstanceProvider;
-    private Injector                                   injector;
-    private EnableOfflineDockerMachineBuildInterceptor interceptor;
+    private DockerInstanceProvider                         dockerInstanceProvider;
+    private Injector                                       injector;
+    private EnableOfflineDockerMachineImagePullInterceptor interceptor;
 
     @BeforeMethod
     private void setup() throws Exception {
         when(dockerCredentials.getCredentials()).thenReturn(null);
-        when(recipeRetriever.getRecipe(any(MachineConfig.class))).thenReturn(recipe);
-        when(recipe.getScript()).thenReturn("FROM " + IMAGE);
+        when(machineConfig.getSource()).thenReturn(new MachineSourceImpl("image").setLocation(IMAGE));
 
         Module module = new AbstractModule() {
             @Override
@@ -93,9 +88,8 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
                 bind(WorkspaceFolderPathProvider.class).to(LocalWorkspaceFolderPathProvider.class);
                 bind(DockerMachineFactory.class).toInstance(dockerMachineFactory);
                 bind(WorkspaceManager.class).toInstance(workspaceManager);
-                bind(RecipeRetriever.class).toInstance(recipeRetriever);
-                bind(RecipeDownloader.class).toInstance(mock(RecipeDownloader.class));
 
+                bind(URI.class).annotatedWith(Names.named("api.endpoint")).toInstance(URI.create("http://localhost:1234"));
                 bindConstant().annotatedWith(Names.named("machine.docker.privilege_mode")).to(false);
                 bindConstant().annotatedWith(Names.named("machine.docker.pull_image")).to(true);
                 bindConstant().annotatedWith(Names.named("machine.docker.snapshot_use_registry")).to(false);
@@ -111,13 +105,13 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
 
         injector = Guice.createInjector(module);
         dockerInstanceProvider = injector.getInstance(DockerInstanceProvider.class);
-        interceptor = injector.getInstance(EnableOfflineDockerMachineBuildInterceptor.class);
+        interceptor = injector.getInstance(EnableOfflineDockerMachineImagePullInterceptor.class);
     }
 
     @Test
     public void checkAllInterceptedMethodsArePresent() throws Throwable {
         ConstructorBinding<?> interceptedBinding
-                = (ConstructorBinding<?>)injector.getBinding(EnableOfflineDockerMachineBuildInterceptor.class);
+                = (ConstructorBinding<?>)injector.getBinding(EnableOfflineDockerMachineImagePullInterceptor.class);
 
         for (Method method : interceptedBinding.getMethodInterceptors().keySet()) {
             dockerInstanceProvider.getClass().getMethod(method.getName(), method.getParameterTypes());
@@ -125,36 +119,8 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
     }
 
     @Test
-    public void shouldProceedInterceptedMethodIfForcePullIsDisabled() throws Throwable {
-        final Object[] arguments = {machineConfig, "machineImageName", false, 0L, 0L, progressMonitor};
-        when(methodInvocation.getArguments()).thenReturn(arguments);
-
-
-        interceptor.invoke(methodInvocation);
-
-
-        verify(methodInvocation).proceed();
-    }
-
-    @Test
-    public void shouldPullDockerImageIfForcePullIsEnabled() throws Throwable {
-        final Object[] arguments = {machineConfig, "machineImageName", true, 0L, 0L, progressMonitor};
-        when(methodInvocation.getArguments()).thenReturn(arguments);
-        final PullParams pullParams = PullParams.create(REPO)
-                                                .withTag(TAG)
-                                                .withAuthConfigs(null);
-
-
-        interceptor.invoke(methodInvocation);
-
-
-        verify(methodInvocation).proceed();
-        verify(dockerConnector).pull(eq(pullParams), any(ProgressMonitor.class));
-    }
-
-    @Test
     public void shouldIgnoreExceptionsOnDockerImagePulling() throws Throwable {
-        final Object[] arguments = {machineConfig, "machineImageName", true, 0L, 0L, progressMonitor};
+        final Object[] arguments = {machineConfig, "machineImageName", progressMonitor};
         when(methodInvocation.getArguments()).thenReturn(arguments);
         doThrow(new IOException()).when(dockerConnector).pull(any(PullParams.class), any(ProgressMonitor.class));
         final PullParams pullParams = PullParams.create(REPO)
@@ -171,9 +137,9 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
 
     @Test
     public void shouldPullLatestIfNoTagFoundInDockerfile() throws Throwable {
-        final Object[] arguments = {machineConfig, "machineImageName", true, 0L, 0L, progressMonitor};
+        final Object[] arguments = {machineConfig, "machineImageName", progressMonitor};
         when(methodInvocation.getArguments()).thenReturn(arguments);
-        when(recipe.getScript()).thenReturn("FROM " + REPO);
+        when(machineConfig.getSource()).thenReturn(new MachineSourceImpl("image").setLocation(REPO));
         final PullParams pullParams = PullParams.create(REPO)
                                                 .withTag("latest")
                                                 .withAuthConfigs(null);

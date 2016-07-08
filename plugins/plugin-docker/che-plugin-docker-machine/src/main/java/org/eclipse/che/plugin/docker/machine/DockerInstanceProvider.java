@@ -313,7 +313,7 @@ public class DockerInstanceProvider implements InstanceProvider {
         };
 
         if (DOCKER_FILE_TYPE.equals(sourceType)) {
-            buildImage(config, imageName, doForcePullOnBuild, memoryLimit, memoryLimit, progressMonitor);
+            buildImage(config, imageName, doForcePullOnBuild, memoryLimit, -1, progressMonitor);
         } else if (DOCKER_IMAGE_TYPE.equals(sourceType)) {
             pullImage(config, imageName, progressMonitor);
         } else {
