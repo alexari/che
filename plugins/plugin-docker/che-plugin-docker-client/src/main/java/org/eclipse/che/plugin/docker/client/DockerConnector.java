@@ -759,14 +759,12 @@ public class DockerConnector {
     private String buildImage(final DockerConnection dockerConnection,
                               final BuildImageParams params,
                               final ProgressMonitor progressMonitor) throws IOException {
-        final AuthConfigs authConfigs = params.getAuthConfigs();
         final String repository = params.getRepository();
-        final String tag = params.getTag();
 
         try (DockerConnection connection = dockerConnection.method("POST")
                                                            .path(apiVersionPathPrefix + "/build")
                                                            .header("X-Registry-Config",
-                                                                   authResolver.getXRegistryConfigHeaderValue(authConfigs))) {
+                                                                   authResolver.getXRegistryConfigHeaderValue(params.getAuthConfigs()))) {
             addQueryParamIfNotNull(connection, "rm", params.isRm());
             addQueryParamIfNotNull(connection, "forcerm", params.isForceRm());
             addQueryParamIfNotNull(connection, "memory", params.getMemoryLimit());
@@ -775,13 +773,14 @@ public class DockerConnector {
             addQueryParamIfNotNull(connection, "dockerfile", params.getDockerfile());
             addQueryParamIfNotNull(connection, "nocache", params.isNocache());
             addQueryParamIfNotNull(connection, "q", params.isQ());
-            addQueryParamIfNotNull(connection, "buildargs", params.getBuildArgs());
-            if (tag == null) {
+            if (params.getTag() == null) {
                 addQueryParamIfNotNull(connection, "t", repository);
             } else {
-                addQueryParamIfNotNull(connection, "t", repository == null ? null : repository + ':' + tag);
+                addQueryParamIfNotNull(connection, "t", repository == null ? null : repository + ':' + params.getTag());
             }
-
+            if (params.getBuildArgs() != null) {
+                addQueryParamIfNotNull(connection, "buildargs", URLEncoder.encode(GSON.toJson(params.getBuildArgs()), "UTF-8"));
+            }
 
             final DockerResponse response = connection.request();
             if (OK.getStatusCode() != response.getStatus()) {

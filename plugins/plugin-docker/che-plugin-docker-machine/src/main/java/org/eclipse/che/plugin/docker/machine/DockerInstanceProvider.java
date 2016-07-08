@@ -435,7 +435,9 @@ public class DockerInstanceProvider implements InstanceProvider {
                                               .withDoForcePull(doForcePullOnBuild)
                                               .withMemoryLimit(memoryLimit)
                                               .withMemorySwapLimit(memorySwapLimit)
-                                              .withBuildArgs(MAINTENANCE_CONSTRAINT), // don't build an image on a node with maintenance
+                                              // don't build an image on a node with maintenance
+                                              .addBuildArg(MAINTENANCE_CONSTRAINT.substring(0,MAINTENANCE_CONSTRAINT.lastIndexOf('=')),
+                                                           MAINTENANCE_CONSTRAINT.substring(MAINTENANCE_CONSTRAINT.lastIndexOf('=') + 1)),
                               progressMonitor);
         } catch (IOException e) {
             throw new MachineException(e.getLocalizedMessage(), e);
@@ -561,7 +563,7 @@ public class DockerInstanceProvider implements InstanceProvider {
                 env = new ArrayList<>(devMachineEnvVariables);
                 env.add(DockerInstanceRuntimeInfo.CHE_WORKSPACE_ID + '=' + machine.getWorkspaceId());
                 env.add(DockerInstanceRuntimeInfo.USER_TOKEN + '=' + getUserToken(machine.getWorkspaceId()));
-                env.add(MAINTENANCE_CONSTRAINT); // do not start a container on a node with maintenance
+                env.add(MAINTENANCE_CONSTRAINT); // do not run new container on a node with maintenance
             } else {
                 portsToExpose = new HashMap<>(commonMachinePortsToExpose);
                 volumes = commonMachineSystemVolumes;
