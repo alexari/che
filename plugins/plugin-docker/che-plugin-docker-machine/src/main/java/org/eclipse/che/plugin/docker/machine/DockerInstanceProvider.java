@@ -302,7 +302,6 @@ public class DockerInstanceProvider implements InstanceProvider {
                                                                                   userName,
                                                                                   config.getName());
         final String imageName = "eclipse-che/" + containerName;
-        final long memoryLimit = (long)config.getLimits().getRam() * 1024 * 1024;
         final ProgressLineFormatterImpl progressLineFormatter = new ProgressLineFormatterImpl();
         ProgressMonitor progressMonitor = currentProgressStatus -> {
             try {
@@ -313,7 +312,7 @@ public class DockerInstanceProvider implements InstanceProvider {
         };
 
         if (DOCKER_FILE_TYPE.equals(sourceType)) {
-            buildImage(config, imageName, doForcePullOnBuild, memoryLimit, -1, progressMonitor);
+            buildImage(config, imageName, progressMonitor);
         } else if (DOCKER_IMAGE_TYPE.equals(sourceType)) {
             pullImage(config, imageName, progressMonitor);
         } else {
@@ -378,15 +377,13 @@ public class DockerInstanceProvider implements InstanceProvider {
     }
 
     protected void buildImage(MachineConfig machineConfig,
-                              String imageName,
-                              boolean doForcePullOnBuild,
-                              long memoryLimit,
-                              long memorySwapLimit,
+                              String machineImageName,
                               ProgressMonitor progressMonitor)
             throws MachineException {
 
         Recipe recipe = recipeRetriever.getRecipe(machineConfig);
         Dockerfile dockerfile = parseRecipe(recipe);
+        long memoryLimit = (long)machineConfig.getLimits().getRam() * 1024 * 1024;
 
         File workDir = null;
         try {
@@ -394,12 +391,13 @@ public class DockerInstanceProvider implements InstanceProvider {
             workDir = Files.createTempDirectory(null).toFile();
             final File dockerfileFile = new File(workDir, "Dockerfile");
             dockerfile.writeDockerfile(dockerfileFile);
+
             docker.buildImage(BuildImageParams.create(dockerfileFile)
-                                              .withRepository(imageName)
+                                              .withRepository(machineImageName)
                                               .withAuthConfigs(dockerCredentials.getCredentials())
                                               .withDoForcePull(doForcePullOnBuild)
                                               .withMemoryLimit(memoryLimit)
-                                              .withMemorySwapLimit(memorySwapLimit),
+                                              .withMemorySwapLimit(-1),
                               progressMonitor);
         } catch (IOException e) {
             throw new MachineException(e.getLocalizedMessage(), e);

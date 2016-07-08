@@ -13,7 +13,6 @@ package org.eclipse.che.plugin.docker.machine.local.interceptor;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
-import com.google.inject.Module;
 import com.google.inject.name.Names;
 import com.google.inject.spi.ConstructorBinding;
 
@@ -40,6 +39,7 @@ import org.testng.annotations.Test;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
+import java.util.function.Supplier;
 
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.eq;
@@ -72,6 +72,8 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
     private RecipeRetriever                               recipeRetriever;
     @Mock
     private Recipe                                        recipe;
+    @Mock
+    private Supplier<Boolean>                             doForcePullOnBuildFlagProvider;
 
 
     private DockerInstanceProvider                     dockerInstanceProvider;
@@ -83,33 +85,9 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
         when(dockerCredentials.getCredentials()).thenReturn(null);
         when(recipeRetriever.getRecipe(any(MachineConfig.class))).thenReturn(recipe);
         when(recipe.getScript()).thenReturn("FROM " + IMAGE);
+        when(doForcePullOnBuildFlagProvider.get()).thenReturn(true);
 
-        Module module = new AbstractModule() {
-            @Override
-            protected void configure() {
-                bind(DockerInstanceProvider.class);
-                bind(DockerConnector.class).toInstance(dockerConnector);
-                bind(UserSpecificDockerRegistryCredentialsProvider.class).toInstance(dockerCredentials);
-                bind(WorkspaceFolderPathProvider.class).to(LocalWorkspaceFolderPathProvider.class);
-                bind(DockerMachineFactory.class).toInstance(dockerMachineFactory);
-                bind(WorkspaceManager.class).toInstance(workspaceManager);
-                bind(RecipeRetriever.class).toInstance(recipeRetriever);
-                bind(RecipeDownloader.class).toInstance(mock(RecipeDownloader.class));
-
-                bindConstant().annotatedWith(Names.named("machine.docker.privilege_mode")).to(false);
-                bindConstant().annotatedWith(Names.named("machine.docker.pull_image")).to(true);
-                bindConstant().annotatedWith(Names.named("machine.docker.snapshot_use_registry")).to(false);
-                bindConstant().annotatedWith(Names.named("machine.docker.memory_swap_multiplier")).to(1.0);
-                bindConstant().annotatedWith(Names.named("che.machine.projects.internal.storage")).to("/tmp");
-                bindConstant().annotatedWith(Names.named("machine.docker.machine_extra_hosts")).to("");
-                bindConstant().annotatedWith(Names.named("host.workspaces.root")).to("/tmp");
-                install(new DockerMachineModule());
-
-                install(new AllowOfflineMachineCreationModule());
-            }
-        };
-
-        injector = Guice.createInjector(module);
+        injector = Guice.createInjector(new TestModule());
         dockerInstanceProvider = injector.getInstance(DockerInstanceProvider.class);
         interceptor = injector.getInstance(EnableOfflineDockerMachineBuildInterceptor.class);
     }
@@ -126,7 +104,13 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
 
     @Test
     public void shouldProceedInterceptedMethodIfForcePullIsDisabled() throws Throwable {
-        final Object[] arguments = {machineConfig, "machineImageName", false, 0L, 0L, progressMonitor};
+        when(doForcePullOnBuildFlagProvider.get()).thenReturn(true);
+
+        injector = Guice.createInjector(new TestModule());
+        dockerInstanceProvider = injector.getInstance(DockerInstanceProvider.class);
+        interceptor = injector.getInstance(EnableOfflineDockerMachineBuildInterceptor.class);
+
+        final Object[] arguments = {machineConfig, "machineImageName", progressMonitor};
         when(methodInvocation.getArguments()).thenReturn(arguments);
 
 
@@ -138,7 +122,7 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
 
     @Test
     public void shouldPullDockerImageIfForcePullIsEnabled() throws Throwable {
-        final Object[] arguments = {machineConfig, "machineImageName", true, 0L, 0L, progressMonitor};
+        final Object[] arguments = {machineConfig, "machineImageName", progressMonitor};
         when(methodInvocation.getArguments()).thenReturn(arguments);
         final PullParams pullParams = PullParams.create(REPO)
                                                 .withTag(TAG)
@@ -154,7 +138,7 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
 
     @Test
     public void shouldIgnoreExceptionsOnDockerImagePulling() throws Throwable {
-        final Object[] arguments = {machineConfig, "machineImageName", true, 0L, 0L, progressMonitor};
+        final Object[] arguments = {machineConfig, "machineImageName", progressMonitor};
         when(methodInvocation.getArguments()).thenReturn(arguments);
         doThrow(new IOException()).when(dockerConnector).pull(any(PullParams.class), any(ProgressMonitor.class));
         final PullParams pullParams = PullParams.create(REPO)
@@ -171,7 +155,7 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
 
     @Test
     public void shouldPullLatestIfNoTagFoundInDockerfile() throws Throwable {
-        final Object[] arguments = {machineConfig, "machineImageName", true, 0L, 0L, progressMonitor};
+        final Object[] arguments = {machineConfig, "machineImageName", progressMonitor};
         when(methodInvocation.getArguments()).thenReturn(arguments);
         when(recipe.getScript()).thenReturn("FROM " + REPO);
         final PullParams pullParams = PullParams.create(REPO)
@@ -184,5 +168,30 @@ public class EnableOfflineDockerMachineBuildInterceptorTest {
 
         verify(methodInvocation).proceed();
         verify(dockerConnector).pull(eq(pullParams), any(ProgressMonitor.class));
+    }
+
+    private class TestModule extends AbstractModule {
+        @Override
+        protected void configure() {
+            bind(DockerInstanceProvider.class);
+            bind(DockerConnector.class).toInstance(dockerConnector);
+            bind(UserSpecificDockerRegistryCredentialsProvider.class).toInstance(dockerCredentials);
+            bind(WorkspaceFolderPathProvider.class).to(LocalWorkspaceFolderPathProvider.class);
+            bind(DockerMachineFactory.class).toInstance(dockerMachineFactory);
+            bind(WorkspaceManager.class).toInstance(workspaceManager);
+            bind(RecipeRetriever.class).toInstance(recipeRetriever);
+            bind(RecipeDownloader.class).toInstance(mock(RecipeDownloader.class));
+
+            bindConstant().annotatedWith(Names.named("machine.docker.privilege_mode")).to(false);
+            bindConstant().annotatedWith(Names.named("machine.docker.pull_image")).to(true);
+            bindConstant().annotatedWith(Names.named("machine.docker.snapshot_use_registry")).to(doForcePullOnBuildFlagProvider.get());
+            bindConstant().annotatedWith(Names.named("machine.docker.memory_swap_multiplier")).to(1.0);
+            bindConstant().annotatedWith(Names.named("che.machine.projects.internal.storage")).to("/tmp");
+            bindConstant().annotatedWith(Names.named("machine.docker.machine_extra_hosts")).to("");
+            bindConstant().annotatedWith(Names.named("host.workspaces.root")).to("/tmp");
+            install(new DockerMachineModule());
+
+            install(new AllowOfflineMachineCreationModule());
+        }
     }
 }

@@ -29,6 +29,7 @@ import org.eclipse.che.plugin.docker.client.parser.DockerImageIdentifierParser;
 import org.eclipse.che.plugin.docker.machine.DockerInstanceProvider;
 
 import javax.inject.Inject;
+import javax.inject.Named;
 import java.io.IOException;
 
 /**
@@ -36,7 +37,7 @@ import java.io.IOException;
  *
  * @author Alexander Garagatyi
  *
- * @see DockerInstanceProvider#buildImage(MachineConfig, String, boolean, long, long, ProgressMonitor)
+ * @see DockerInstanceProvider#buildImage(MachineConfig, String, ProgressMonitor)
  */
 public class EnableOfflineDockerMachineBuildInterceptor implements MethodInterceptor {
     @Inject
@@ -45,16 +46,18 @@ public class EnableOfflineDockerMachineBuildInterceptor implements MethodInterce
     UserSpecificDockerRegistryCredentialsProvider dockerCredentials;
     @Inject
     RecipeRetriever                               recipeRetriever;
+    @Inject
+    @Named("machine.docker.pull_image")
+    boolean                                       doForcePullOnBuild;
 
     @Override
     public Object invoke(MethodInvocation methodInvocation) throws Throwable {
         // If force pull of base image is not disabled ensure that image build won't fail if needed layers are cached
         // but update of them fails due to network outage.
         // To do that do pull here if needed and make DockerInstanceProvider to not do force pull itself.
-        final boolean isForcePullEnabled = (boolean)methodInvocation.getArguments()[2];
-        if (isForcePullEnabled) {
+        if (doForcePullOnBuild) {
             MachineConfig machineConfig = (MachineConfig)methodInvocation.getArguments()[0];
-            ProgressMonitor progressMonitor = (ProgressMonitor)methodInvocation.getArguments()[5];
+            ProgressMonitor progressMonitor = (ProgressMonitor)methodInvocation.getArguments()[2];
 
             try {
                 pullImage(machineConfig, progressMonitor);
